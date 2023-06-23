@@ -10,8 +10,8 @@ MOST_ALLOWED_COORDINATES = 90
 
 
 def calculate_bearing(coordinate1, coordinate2):
-    lat1, lon1 = coordinate1
-    lat2, lon2 = coordinate2
+    lon1, lat1 = coordinate1
+    lon2, lat2 = coordinate2
 
     lat1_rad = math.radians(lat1)
     lon1_rad = math.radians(lon1)
@@ -32,20 +32,18 @@ def calculate_bearing(coordinate1, coordinate2):
 
 
 def main():
-    starting_coordinates = (-72.986082, 40.751723)
+    starting_coordinates = (40.751723, -72.986082)
     stops = [
-        (-73.986082, 40.751723),
-        (-73.985542, 40.7484665)
     ]
-    ending_coordinates = (-73.985542, 40.7484665)
+    ending_coordinates = (40.7484665, -73.985542)
 
     stops_string = f"{';'.join([f'{stop[0]},{stop[1]}' for stop in stops])}{';' if len(stops) else ''}"
 
     domain = "https://api.mapbox.com"
     path = f"/directions/v5/mapbox/driving/" \
-           f"{starting_coordinates[0]},{starting_coordinates[1]};" \
+           f"{starting_coordinates[1]},{starting_coordinates[0]};" \
            f"{stops_string}" \
-           f"{ending_coordinates[0]},{ending_coordinates[1]}"
+           f"{ending_coordinates[1]},{ending_coordinates[0]}"
 
     query_string_seperator = "?"
     params = {
@@ -85,24 +83,24 @@ def main():
 
     bearing_list = []
     for i in range(len(new_coordinates_list) - 1):
-        bearing = calculate_bearing(*new_coordinates_list[i], *new_coordinates_list[i + 1])
+        bearing = calculate_bearing(new_coordinates_list[i], new_coordinates_list[i + 1])
         bearing_list.append(bearing)
     bearing_list.append(0.0)
 
-    domain = "https://maps.googleapis.com/maps/api/elevation/json"
+    domain = "https://api.open-meteo.com/v1/elevation"
     query_string_seperator = "?"
     params = {
-        "locations": "|".join([f"{cord[0]},{cord[1]}" for cord in new_coordinates_list]),
-        "key": constants.GOOGLEMAPS_ELEVATION_API_KEY
+        "latitude": ",".join([str(cord[1]) for cord in new_coordinates_list]),
+        "longitude": ",".join([str(cord[0]) for cord in new_coordinates_list])
     }
     querystring = parse.urlencode(params)
-    url = domain + path + query_string_seperator + querystring
+    url = domain + query_string_seperator + querystring
+    url = url.replace("%2C", ",")
     resp = requests.get(url)
-    results = resp.json()["results"]
+    elevation_list = resp.json()["elevation"]
 
-    elevation_list = []
-    for result in results:
-        elevation_list.append(result["elevation"])
+    for cord, alt, bearing in zip(new_coordinates_list, elevation_list, bearing_list):
+        print(cord, alt, bearing)
 
 
 if __name__ == '__main__':
