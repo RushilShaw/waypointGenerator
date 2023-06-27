@@ -4,6 +4,8 @@ import requests
 from urllib import parse
 import constants
 
+
+OUTPUT_FILENAME = "output.txt"
 MOST_ALLOWED_COORDINATES = 90
 LATERAL_ACCELERATION = 12.0
 
@@ -90,6 +92,7 @@ def filter_waypoints(waypoints_list):
     for coordinate in waypoints_list:
         if coordinate in most_important_coordinates:
             new_waypoints_list.append(coordinate)
+    new_waypoints_list[-1] = waypoints_list[-1]
 
     return new_waypoints_list
 
@@ -125,38 +128,35 @@ def get_elevation_list_from_coordinates_list(coordinates_list: list[GeoCoordinat
 
 
 def output(waypoints_list, elevation_list, bearing_list, *, filename=None):
-    # TODO - Refactor this
+    motion_command = f"SIM:POS:MOTION:WRITE {{line_number}}, "
     starting_coordinate = waypoints_list[0]
     starting_commands = [
-        f"SIM:POS:MOTION:WRITE {{line_number}}, DYN, 12.000, 10.000, 1.000, 10.000, 1.000",
-
-        f"SIM:POS:MOTION:WRITE {{line_number}}, REF, {starting_coordinate.lat}, {starting_coordinate.lon}, "
-        f"{elevation_list[0]}, {bearing_list[0]}, {LATERAL_ACCELERATION}"
+        "DYN, 12.000, 10.000, 1.000, 10.000, 1.000",
+        f"REF, {starting_coordinate.lat}, {starting_coordinate.lon}, {elevation_list[0]}, {bearing_list[0]}, "
+        f"{LATERAL_ACCELERATION}"
     ]
     all_commands = starting_commands.copy()
     for index, (waypoint, altitude, bearing) in enumerate(zip(waypoints_list, elevation_list, bearing_list)):
-        command = f"SIM:POS:MOTION:WRITE, {{line_number}} WAYPT, {waypoint.lat}, {waypoint.lon}, {altitude}, " \
-                  f"{bearing}, {LATERAL_ACCELERATION}"
+        command = f"WAYPT, {waypoint.lat}, {waypoint.lon}, {altitude}, {bearing}, {LATERAL_ACCELERATION}"
         all_commands.append(command)
     ending_commands = [
-        f"SIM:POS:MOTION:WRITE, {{line_number}} WAYPT, {waypoints_list[-1].lat}, "
-        f"{waypoints_list[-1].lon}, {elevation_list[-1]}, {0.0}, {LATERAL_ACCELERATION}",
-
-        f"SIM:POS:MOTION:WRITE {{line_number}}, GOTO, {len(starting_commands) + 1}"
+        f"WAYPT, {waypoints_list[-1].lat}, {waypoints_list[-1].lon}, {elevation_list[-1]},, {LATERAL_ACCELERATION}",
+        f"GOTO, {len(starting_commands) + 1}"
     ]
     all_commands.extend(ending_commands)
 
     if filename is None:
         for index, command in enumerate(all_commands):
-            print(command.format(line_number=index + 1))
+            full_command = motion_command.format(line_number=index + 1) + command
+            print(full_command)
     else:
         with open(filename, 'w') as f:
             for index, command in enumerate(all_commands):
-                command = command.format(line_number=index + 1)
-                f.write(f"{command}\n")
+                full_command = motion_command.format(line_number=index + 1) + command
+                f.write(f"{full_command}\n")
 
 
-def main():
+def make_gps_simulation():
     starting_coordinate = GeoCoordinate(40.751723, -72.986082)
     stops = [
     ]
@@ -168,9 +168,9 @@ def main():
     bearing_list = get_bearing_list_from_coordinates_list(waypoints_list)
 
     elevation_list = get_elevation_list_from_coordinates_list(waypoints_list)
-    # TODO Add functinality to prevent duplicate runs
-    output(waypoints_list, bearing_list, elevation_list, filename=None)
+    # TODO Add functionality to prevent duplicate runs
+    output(waypoints_list, bearing_list, elevation_list, filename=OUTPUT_FILENAME)
 
 
 if __name__ == '__main__':
-    main()
+    make_gps_simulation()
