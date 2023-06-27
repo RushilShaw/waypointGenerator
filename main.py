@@ -11,15 +11,15 @@ LATERAL_ACCELERATION = 12.0
 
 
 class GeoCoordinate:
-    def __init__(self, latitude, longitude):
+    def __init__(self, latitude: float, longitude: float):
         self.lat = latitude
         self.lon = longitude
 
-    def calculate_distance(self, other):
+    def calculate_distance(self, other) -> float:
         distance = geopy.distance.geodesic((self.lat, self.lon), (other.lat, other.lon)).km
         return distance
 
-    def calculate_bearing(self, other):
+    def calculate_bearing(self, other) -> float:
         lat1 = self.lat
         lon1 = self.lon
         lon2 = other.lon
@@ -43,7 +43,8 @@ class GeoCoordinate:
         return bearing_normalized
 
 
-def generate_waypoints(starting_coordinate: GeoCoordinate, stops: list, ending_coordinate: GeoCoordinate):
+def generate_waypoints(starting_coordinate: GeoCoordinate, stops: list[GeoCoordinate],
+                       ending_coordinate: GeoCoordinate) -> list[GeoCoordinate]:
     domain = "https://api.mapbox.com"
 
     stops_string = f"{';'.join([f'{stop.lon},{stop.lat}' for stop in stops])}{';' if len(stops) else ''}"
@@ -97,7 +98,7 @@ def filter_waypoints(waypoints_list):
     return new_waypoints_list
 
 
-def get_bearing_list_from_coordinates_list(coordinates_list: list[GeoCoordinate]):
+def get_bearing_list_from_coordinates_list(coordinates_list: list[GeoCoordinate]) -> list[float]:
     bearing_list = []
     for i in range(len(coordinates_list) - 1):
         bearing = GeoCoordinate.calculate_bearing(coordinates_list[i], coordinates_list[i + 1])
@@ -105,7 +106,7 @@ def get_bearing_list_from_coordinates_list(coordinates_list: list[GeoCoordinate]
     return bearing_list
 
 
-def get_elevation_list_from_coordinates_list(coordinates_list: list[GeoCoordinate]):
+def get_elevation_list_from_coordinates_list(coordinates_list: list[GeoCoordinate]) -> list[float]:
     domain = "https://api.open-meteo.com/v1/elevation"
     query_string_seperator = "?"
     latitude_string = ",".join([str(cord.lat) for cord in coordinates_list])
@@ -129,18 +130,20 @@ def get_elevation_list_from_coordinates_list(coordinates_list: list[GeoCoordinat
 
 def output(waypoints_list, elevation_list, bearing_list, *, filename=None):
     motion_command = f"SIM:POS:MOTION:WRITE {{line_number}}, "
+
+    all_commands = []
     starting_coordinate = waypoints_list[0]
     starting_commands = [
         "DYN, 12.000, 10.000, 1.000, 10.000, 1.000",
         f"REF, {starting_coordinate.lat}, {starting_coordinate.lon}, {elevation_list[0]}, {bearing_list[0]}, "
         f"{LATERAL_ACCELERATION}"
     ]
-    all_commands = starting_commands.copy()
+    all_commands.extend(starting_commands)
     for index, (waypoint, altitude, bearing) in enumerate(zip(waypoints_list, elevation_list, bearing_list)):
         command = f"WAYPT, {waypoint.lat}, {waypoint.lon}, {altitude}, {bearing}, {LATERAL_ACCELERATION}"
         all_commands.append(command)
     ending_commands = [
-        f"WAYPT, {waypoints_list[-1].lat}, {waypoints_list[-1].lon}, {elevation_list[-1]},, {LATERAL_ACCELERATION}",
+        f"WAYPT, {waypoints_list[-1].lat}, {waypoints_list[-1].lon}, {elevation_list[-1]}, 0.0, {LATERAL_ACCELERATION}",
         f"GOTO, {len(starting_commands) + 1}"
     ]
     all_commands.extend(ending_commands)
@@ -156,7 +159,7 @@ def output(waypoints_list, elevation_list, bearing_list, *, filename=None):
                 f.write(f"{full_command}\n")
 
 
-def make_gps_simulation():
+def make_gps_simulation_commands():
     starting_coordinate = GeoCoordinate(40.751723, -72.986082)
     stops = [
     ]
@@ -168,9 +171,9 @@ def make_gps_simulation():
     bearing_list = get_bearing_list_from_coordinates_list(waypoints_list)
 
     elevation_list = get_elevation_list_from_coordinates_list(waypoints_list)
-    # TODO Add functionality to prevent duplicate runs
+
     output(waypoints_list, bearing_list, elevation_list, filename=OUTPUT_FILENAME)
 
 
 if __name__ == '__main__':
-    make_gps_simulation()
+    make_gps_simulation_commands()
