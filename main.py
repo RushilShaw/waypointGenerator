@@ -3,9 +3,10 @@ import geopy.distance
 import requests
 from urllib import parse
 import constants
+import warnings
 
 
-OUTPUT_FILENAME = "output.txt"
+OUTPUT_FILENAME = "atlanta_to_ctc.kml"
 MOST_ALLOWED_COORDINATES = 90
 LATERAL_ACCELERATION = 12.0
 
@@ -15,9 +16,9 @@ class GeoCoordinate:
         self.lat = latitude
         self.lon = longitude
 
-    def calculate_distance(self, other) -> float:
-        distance = geopy.distance.geodesic((self.lat, self.lon), (other.lat, other.lon)).km
-        return distance
+    def calculate_distance(self, other, unit="km") -> float:
+        distance = geopy.distance.geodesic((self.lat, self.lon), (other.lat, other.lon))
+        return getattr(distance, unit)
 
     def calculate_bearing(self, other) -> float:
         lat1 = self.lat
@@ -67,10 +68,15 @@ def generate_waypoints(starting_coordinate: GeoCoordinate, stops: list[GeoCoordi
     resp = requests.get(url)
 
     if not resp.ok:
-        raise ConnectionError(f"{resp.status_code=}")
+        raise ConnectionError(f"Generate Waypoints API returned {resp.status_code=}")
 
-    coordinates_list = [starting_coordinate]
-    legs = resp.json()["routes"][0]["legs"]
+    routes = resp.json()["routes"]
+
+    if len(routes) == 0:
+        raise ValueError("This route is not possible")
+
+    legs = routes[0]["legs"]
+    coordinates_list = []
     for leg in legs:
         steps = leg["steps"]
         for step in steps:
@@ -81,19 +87,24 @@ def generate_waypoints(starting_coordinate: GeoCoordinate, stops: list[GeoCoordi
 
 def filter_waypoints(waypoints_list):
     """This function filters the waypoints to the MOST_ALLOWED_COORDINATES number of longest paths between points"""
-    distances_list = [float('inf')]
-    for i in range(len(waypoints_list) - 1):
-        distance = GeoCoordinate.calculate_distance(waypoints_list[i], waypoints_list[i + 1])
-        distances_list.append(distance)
+    if MOST_ALLOWED_COORDINATES is None or len(waypoints_list) <= MOST_ALLOWED_COORDINATES:
+        return waypoints_list
+    else:
+        warnings.warn(f"MOST_ALLOWED_COORDINATES exceeded - {len(waypoints_list) - MOST_ALLOWED_COORDINATES} pts lost")
 
-    sorted_distance, sorted_coordinates = zip(*sorted(zip(distances_list, waypoints_list)))
+    distances_list = [0.0]
+    for i in range(len(waypoints_list) - 1):
+        distance_km = GeoCoordinate.calculate_distance(waypoints_list[i], waypoints_list[i + 1], unit="km")
+        distances_list.append(distance_km)
+
+    sorted_distance_km, sorted_coordinates = zip(*sorted(zip(distances_list, waypoints_list), key=lambda x: x[0]))
     most_important_coordinates = sorted_coordinates[:MOST_ALLOWED_COORDINATES - 2]
 
     new_waypoints_list = [waypoints_list[0]]
     for coordinate in waypoints_list:
         if coordinate in most_important_coordinates:
             new_waypoints_list.append(coordinate)
-    new_waypoints_list[-1] = waypoints_list[-1]
+    new_waypoints_list.append(waypoints_list[-1])
 
     return new_waypoints_list
 
@@ -121,7 +132,7 @@ def get_elevation_list_from_coordinates_list(coordinates_list: list[GeoCoordinat
     resp = requests.get(url)
 
     if not resp.ok:
-        raise ConnectionError(f"{resp.status_code=}")
+        raise ConnectionError(f"Elevation API returned {resp.status_code=}")
 
     elevation_list = resp.json()["elevation"]
 
@@ -129,13 +140,12 @@ def get_elevation_list_from_coordinates_list(coordinates_list: list[GeoCoordinat
 
 
 def output(waypoints_list, elevation_list, bearing_list, *, filename=None):
-    motion_command = f"SIM:POS:MOTION:WRITE {{line_number}}, "
+    motion_command = f"SIM:POS:MOTION:WRITE {{line_number}}, {{command}}"
 
     all_commands = []
-    starting_coordinate = waypoints_list[0]
     starting_commands = [
         "DYN, 12.000, 10.000, 1.000, 10.000, 1.000",
-        f"REF, {starting_coordinate.lat}, {starting_coordinate.lon}, {elevation_list[0]}, {bearing_list[0]}, "
+        f"REF, {waypoints_list[0].lat}, {waypoints_list[0].lon}, {elevation_list[0]}, {bearing_list[0]}, "
         f"{LATERAL_ACCELERATION}"
     ]
     all_commands.extend(starting_commands)
@@ -150,29 +160,42 @@ def output(waypoints_list, elevation_list, bearing_list, *, filename=None):
 
     if filename is None:
         for index, command in enumerate(all_commands):
-            full_command = motion_command.format(line_number=index + 1) + command
+            full_command = motion_command.format(line_number=index + 1, command=command)
             print(full_command)
+
+    elif filename.endswith('.kml'):
+        import simplekml
+        kml = simplekml.Kml()
+        for index, (cord, altitude, heading) in enumerate(zip(waypoints_list, elevation_list, bearing_list)):
+            kml.newpoint(name=f"Point: {index + 1}", coords=[(cord.lon, cord.lat, altitude)], description=str(heading))
+        kml.save(filename)
+
     else:
         with open(filename, 'w') as f:
             for index, command in enumerate(all_commands):
-                full_command = motion_command.format(line_number=index + 1) + command
+                full_command = motion_command.format(line_number=index + 1, command=command)
                 f.write(f"{full_command}\n")
 
 
 def make_gps_simulation_commands():
-    starting_coordinate = GeoCoordinate(40.751723, -72.986082)
+    starting_coordinate = GeoCoordinate(33.9526, -84.5499)
     stops = [
+        GeoCoordinate(35.0458, -85.3094),
+        GeoCoordinate(35.9606, -83.9207),
+        GeoCoordinate(38.2527, -85.7585),
+        GeoCoordinate(39.1031, -84.5120),
+        GeoCoordinate(42.3314, -83.0458)
     ]
-    ending_coordinate = GeoCoordinate(40.7484665, -73.985542)
+    ending_coordinate = GeoCoordinate(42.654640, -83.233650)
 
     waypoints_list = generate_waypoints(starting_coordinate, stops, ending_coordinate)
     waypoints_list = filter_waypoints(waypoints_list)
 
-    bearing_list = get_bearing_list_from_coordinates_list(waypoints_list)
-
     elevation_list = get_elevation_list_from_coordinates_list(waypoints_list)
 
-    output(waypoints_list, bearing_list, elevation_list, filename=OUTPUT_FILENAME)
+    bearing_list = get_bearing_list_from_coordinates_list(waypoints_list)
+
+    output(waypoints_list, elevation_list, bearing_list, filename=OUTPUT_FILENAME)
 
 
 if __name__ == '__main__':
