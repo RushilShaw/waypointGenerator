@@ -7,7 +7,7 @@ import warnings
 
 
 OUTPUT_FILENAME = "sandiego.kml"
-MOST_ALLOWED_COORDINATES = 90
+MOST_ALLOWED_COORDINATES = None
 LATERAL_ACCELERATION = 12.0
 
 
@@ -76,12 +76,9 @@ def generate_waypoints(starting_coordinate: GeoCoordinate, stops: list[GeoCoordi
         raise ValueError("This route is not possible")
 
     coordinates_list = []
-    legs = routes[0]["legs"]
-    for leg in legs:
-        steps = leg["steps"]
-        for step in steps:
-            coordinate = step["geometry"]["coordinates"][0]
-            coordinates_list.append(GeoCoordinate(latitude=coordinate[1], longitude=coordinate[0]))
+    coordinates = routes[0]["geometry"]["coordinates"]
+    for coordinate in coordinates:
+        coordinates_list.append(GeoCoordinate(latitude=coordinate[1], longitude=coordinate[0]))
 
     coordinates_list.append(ending_coordinate)
 
