@@ -6,7 +6,7 @@ import constants
 import warnings
 
 
-OUTPUT_FILENAME = "atlanta_to_ctc.kml"
+OUTPUT_FILENAME = "sandiego.kml"
 MOST_ALLOWED_COORDINATES = 90
 LATERAL_ACCELERATION = 12.0
 
@@ -75,13 +75,16 @@ def generate_waypoints(starting_coordinate: GeoCoordinate, stops: list[GeoCoordi
     if len(routes) == 0:
         raise ValueError("This route is not possible")
 
-    legs = routes[0]["legs"]
     coordinates_list = []
+    legs = routes[0]["legs"]
     for leg in legs:
         steps = leg["steps"]
         for step in steps:
             coordinate = step["geometry"]["coordinates"][0]
             coordinates_list.append(GeoCoordinate(latitude=coordinate[1], longitude=coordinate[0]))
+
+    coordinates_list.append(ending_coordinate)
+
     return coordinates_list
 
 
@@ -97,7 +100,8 @@ def filter_waypoints(waypoints_list):
         distance_km = GeoCoordinate.calculate_distance(waypoints_list[i], waypoints_list[i + 1], unit="km")
         distances_list.append(distance_km)
 
-    sorted_distance_km, sorted_coordinates = zip(*sorted(zip(distances_list, waypoints_list), key=lambda x: x[0]))
+    sorted_distance_km, sorted_coordinates = zip(*sorted(zip(distances_list, waypoints_list),
+                                                         key=lambda x: x[0], reverse=True))
     most_important_coordinates = sorted_coordinates[:MOST_ALLOWED_COORDINATES - 2]
 
     new_waypoints_list = [waypoints_list[0]]
@@ -120,21 +124,35 @@ def get_bearing_list_from_coordinates_list(coordinates_list: list[GeoCoordinate]
 def get_elevation_list_from_coordinates_list(coordinates_list: list[GeoCoordinate]) -> list[float]:
     domain = "https://api.open-meteo.com/v1/elevation"
     query_string_seperator = "?"
-    latitude_string = ",".join([str(cord.lat) for cord in coordinates_list])
-    longitude_string = ",".join([str(cord.lon) for cord in coordinates_list])
-    params = {
-        "latitude": latitude_string,
-        "longitude": longitude_string
-    }
-    querystring = parse.urlencode(params)
-    url = domain + query_string_seperator + querystring
-    url = url.replace("%2C", ",")
-    resp = requests.get(url)
 
-    if not resp.ok:
-        raise ConnectionError(f"Elevation API returned {resp.status_code=}")
+    elevation_list = []
 
-    elevation_list = resp.json()["elevation"]
+    # the open-meteo api used only allows for up to 100 altitudes to be returned from one
+    # call, so this loop calls the api 100 coordinates at a time until the coordinates list is exhausted
+    for i in range(len(coordinates_list) // 100 + 1):
+        left_index = i * 100
+        right_index = i * 100 + 100
+
+        next_hundred_latitude_list = [str(cord.lat) for cord in coordinates_list[left_index: right_index]]
+        next_hundred_longitude_list = [str(cord.lon) for cord in coordinates_list[left_index: right_index]]
+
+        latitude_string = ",".join(next_hundred_latitude_list)
+        longitude_string = ",".join(next_hundred_longitude_list)
+
+        params = {
+            "latitude": latitude_string,
+            "longitude": longitude_string
+        }
+        querystring = parse.urlencode(params)
+        url = domain + query_string_seperator + querystring
+        url = url.replace("%2C", ",")
+        resp = requests.get(url)
+
+        if not resp.ok:
+            raise ConnectionError(f"Elevation API returned {resp.status_code=}")
+
+        elevations = resp.json()["elevation"]
+        elevation_list.extend(elevations)
 
     return elevation_list
 
@@ -144,6 +162,7 @@ def output(waypoints_list, elevation_list, bearing_list, *, filename=None):
 
     all_commands = []
     starting_commands = [
+        "SIM:COM:START",  # TODO - Verify this
         "DYN, 12.000, 10.000, 1.000, 10.000, 1.000",
         f"REF, {waypoints_list[0].lat}, {waypoints_list[0].lon}, {elevation_list[0]}, {bearing_list[0]}, "
         f"{LATERAL_ACCELERATION}"
@@ -158,7 +177,7 @@ def output(waypoints_list, elevation_list, bearing_list, *, filename=None):
     ]
     all_commands.extend(ending_commands)
 
-    if filename is None:
+    if filename is None or filename == "":
         for index, command in enumerate(all_commands):
             full_command = motion_command.format(line_number=index + 1, command=command)
             print(full_command)
@@ -178,15 +197,10 @@ def output(waypoints_list, elevation_list, bearing_list, *, filename=None):
 
 
 def make_gps_simulation_commands():
-    starting_coordinate = GeoCoordinate(33.9526, -84.5499)
+    starting_coordinate = GeoCoordinate(32.721771, -117.167107)
     stops = [
-        GeoCoordinate(35.0458, -85.3094),
-        GeoCoordinate(35.9606, -83.9207),
-        GeoCoordinate(38.2527, -85.7585),
-        GeoCoordinate(39.1031, -84.5120),
-        GeoCoordinate(42.3314, -83.0458)
     ]
-    ending_coordinate = GeoCoordinate(42.654640, -83.233650)
+    ending_coordinate = GeoCoordinate(32.715480, -117.155890)
 
     waypoints_list = generate_waypoints(starting_coordinate, stops, ending_coordinate)
     waypoints_list = filter_waypoints(waypoints_list)
