@@ -6,7 +6,7 @@ import warnings
 from constants import MAPBOX_API_KEY
 
 
-OUTPUT_FILENAME = "sandiego.kml"
+OUTPUT_FILENAME = "output.txt"
 MOST_ALLOWED_COORDINATES = None
 LATERAL_ACCELERATION = 12.0
 
