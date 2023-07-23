@@ -1,0 +1,17 @@
+{
+   "Starting Point": {
+     "latitude": 36.016946,
+     "longitude": -78.908317
+   },
+   "Stops": [
+     {
+       "latitude": 35.996979,
+       "longitude": -78.910295
+     }
+   ],
+   "Ending Point": {
+     "latitude": 36.016946,
+     "longitude": -78.908317
+   },
+   "Output Filename": "commands.txt"
+}

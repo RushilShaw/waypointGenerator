@@ -1,14 +1,25 @@
 import math
-import geopy.distance
+import json
 import requests
-from urllib import parse
+import pathlib
 import warnings
+import geopy.distance
+from urllib import parse
 from constants import MAPBOX_API_KEY
 
 
-OUTPUT_FILENAME = "output.txt"
-MOST_ALLOWED_COORDINATES = None
-LATERAL_ACCELERATION = 12.0
+CONFIGURATION_FILEPATH = pathlib.Path("config.json")
+MOST_ALLOWED_COORDINATES = 90
+LOOP_SIMULATION_INSTEAD_OF_ENDING = True
+
+# Vehicle Dynamics Variables
+SPEED_METERS_PER_SECOND = 12.0
+LATERAL_ACCELERATION_METERS_PER_SECOND = 12.0
+MAX_LINEAR_SPEED_METERS_PER_SECOND = 12.0
+MAX_LINEAR_ACCELERATION_METERS_PER_SECOND_SQUARED = 10.0
+MAX_LINEAR_JERK_METERS_PER_SECOND_CUBED = 1.0
+MAX_LATERAL_ACCELERATION_METERS_PER_SECOND_SQUARED = 10.0
+MAX_LATERAL_JERK_METERS_PER_SECOND_CUBED = 1.0
 
 
 class GeoCoordinate:
@@ -42,6 +53,25 @@ class GeoCoordinate:
         bearing_normalized = (bearing_deg + 360) % 360
 
         return bearing_normalized
+
+
+def get_configuration(config_file):
+    if not config_file.is_file():
+        raise FileNotFoundError(f"{config_file.absolute()} is not a file.")
+
+    with open(config_file, 'r') as file:
+        config = json.load(file)
+
+    starting_point = GeoCoordinate(**config["Starting Point"])
+    config_stops = config.get("Stops")
+    stops = []
+    if config_stops is not None:
+        for stop in config_stops:
+            stops.append(GeoCoordinate(**stop))
+    ending_point = GeoCoordinate(**config["Ending Point"])
+    output_filename = config["Output Filename"]
+
+    return starting_point, stops, ending_point, output_filename
 
 
 def generate_waypoints(starting_point: GeoCoordinate, stops: list[GeoCoordinate],
@@ -83,6 +113,15 @@ def generate_waypoints(starting_point: GeoCoordinate, stops: list[GeoCoordinate]
     return coordinates_list
 
 
+def get_bearing_list_from_coordinates_list(coordinates: list[GeoCoordinate]) -> list[float]:
+    bearings = []
+    for i in range(len(coordinates) - 1):
+        bearing = GeoCoordinate.calculate_bearing(coordinates[i], coordinates[i + 1])
+        bearings.append(bearing)
+    bearings.append(0.0)  # the bearings list is one shorter than the coordinate list, so it must be appended with a 0.0
+    return bearings
+
+
 def filter_waypoints(waypoints, bearings):
     # filters the points to remove points that are have a change of direction by less than 2 degrees
     new_waypoints = []
@@ -99,7 +138,7 @@ def filter_waypoints(waypoints, bearings):
     if MOST_ALLOWED_COORDINATES is None or len(waypoints) <= MOST_ALLOWED_COORDINATES:
         return waypoints
     else:
-        warnings.warn(f"MOST_ALLOWED_COORDINATES exceeded - {len(waypoints) - MOST_ALLOWED_COORDINATES} pts lost")
+        warnings.warn(f"MOST_ALLOWED_COORDINATES exceeded - {len(waypoints) - MOST_ALLOWED_COORDINATES} points lost")
 
     # filters the points to restrict the waypoints to the eliminate points that are the closest together
     # as they are the least important
@@ -120,22 +159,13 @@ def filter_waypoints(waypoints, bearings):
     return new_waypoints_list
 
 
-def get_bearing_list_from_coordinates_list(coordinates: list[GeoCoordinate]) -> list[float]:
-    bearings = []
-    for i in range(len(coordinates) - 1):
-        bearing = GeoCoordinate.calculate_bearing(coordinates[i], coordinates[i + 1])
-        bearings.append(bearing)
-    bearings.append(0.0)  # the bearings list is one shorter than the coordinate list it must be normalized
-    return bearings
-
-
 def get_elevation_list_from_coordinates_list(coordinates: list[GeoCoordinate]) -> list[float]:
     domain = "https://api.open-meteo.com/v1/elevation"
     query_string_seperator = "?"
 
     elevation_list = []
 
-    # the open-meteo api used only allows for up to 100 elevation to be returned from one
+    # the open-meteo api used only allows for up to 100 elevations to be returned from one
     # call, so this loop calls the api 100 coordinates at a time until the coordinates list is exhausted
     for i in range(len(coordinates) // 100 + 1):
         left_index = i * 100
@@ -170,52 +200,49 @@ def output(waypoints, elevations, bearings, *, filename=None):
 
     all_commands = []
     starting_commands = [
-        "SIM:COM:START",  # TODO - Verify this
-        "DYN, 12.000, 10.000, 1.000, 10.000, 1.000",
-        f"REF, {waypoints[0].lat}, {waypoints[0].lon}, {elevations[0]}, {bearings[0]}, "
-        f"{LATERAL_ACCELERATION}"
+        f"DYN, {LATERAL_ACCELERATION_METERS_PER_SECOND}, {MAX_LINEAR_SPEED_METERS_PER_SECOND}, "
+        f"{MAX_LINEAR_ACCELERATION_METERS_PER_SECOND_SQUARED}, {MAX_LINEAR_JERK_METERS_PER_SECOND_CUBED}, "
+        f"{MAX_LATERAL_ACCELERATION_METERS_PER_SECOND_SQUARED}, {MAX_LATERAL_JERK_METERS_PER_SECOND_CUBED}",
+
+        f"REF, {waypoints[0].lat}, {waypoints[0].lon}, {elevations[0]}, {bearings[0]:.3f}, {SPEED_METERS_PER_SECOND}"
     ]
     all_commands.extend(starting_commands)
     for index, (waypoint, altitude, bearing) in enumerate(zip(waypoints, elevations, bearings)):
-        command = f"WAYPT, {waypoint.lat}, {waypoint.lon}, {altitude}, {bearing}, {LATERAL_ACCELERATION}"
+        command = f"WAYPT, {waypoint.lat}, {waypoint.lon}, {altitude}, {bearing:.3f}, " \
+                  f"{LATERAL_ACCELERATION_METERS_PER_SECOND}"
         all_commands.append(command)
     ending_commands = [
-        f"GOTO, {len(starting_commands) + 1}"
+        f"{'GOTO' if LOOP_SIMULATION_INSTEAD_OF_ENDING else 'END'}, {len(starting_commands)+1}"
     ]
     all_commands.extend(ending_commands)
 
     if filename is None or filename == "":
         for index, command in enumerate(all_commands):
-            full_command = motion_command.format(line_number=index + 1, command=command)
+            full_command = motion_command.format(line_number=index+1, command=command)
             print(full_command)
 
     elif filename.endswith('.kml'):
         import simplekml
         kml = simplekml.Kml()
         for index, (cord, altitude, heading) in enumerate(zip(waypoints, elevations, bearings)):
-            kml.newpoint(name=f"Point: {index + 1}", coords=[(cord.lon, cord.lat, altitude)], description=str(heading))
+            kml.newpoint(name=f"Point: {index+1}", coords=[(cord.lon, cord.lat, altitude)], description=str(heading))
         kml.save(filename)
 
     else:
         with open(filename, 'w') as f:
             for index, command in enumerate(all_commands):
-                full_command = motion_command.format(line_number=index + 1, command=command)
+                full_command = motion_command.format(line_number=index+1, command=command)
                 f.write(f"{full_command}\n")
 
 
 def make_gps_simulation_commands():
-    starting_point = GeoCoordinate(32.721771, -117.167107)
-    stops = [
-    ]
-    ending_point = GeoCoordinate(32.715480, -117.155890)
-
+    starting_point, stops, ending_point, output_filename = get_configuration(CONFIGURATION_FILEPATH)
     waypoints = generate_waypoints(starting_point, stops, ending_point)
     bearings = get_bearing_list_from_coordinates_list(waypoints)
     waypoints = filter_waypoints(waypoints, bearings)
     bearings = get_bearing_list_from_coordinates_list(waypoints)
     elevations = get_elevation_list_from_coordinates_list(waypoints)
-
-    output(waypoints, elevations, bearings, filename=OUTPUT_FILENAME)
+    output(waypoints, elevations, bearings, filename=output_filename)
 
 
 if __name__ == '__main__':

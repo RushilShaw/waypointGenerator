@@ -1,4 +1,5 @@
 import serial
+import pathlib
 import serial.tools.list_ports
 import time
 
