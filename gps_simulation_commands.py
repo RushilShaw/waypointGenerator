@@ -9,17 +9,7 @@ from constants import MAPBOX_API_KEY
 
 
 CONFIGURATION_FILEPATH = pathlib.Path("config.json")
-MOST_ALLOWED_COORDINATES = 90
-LOOP_SIMULATION_INSTEAD_OF_ENDING = True
-
-# Vehicle Dynamics Variables
-SPEED_METERS_PER_SECOND = 12.0
-LATERAL_ACCELERATION_METERS_PER_SECOND = 12.0
-MAX_LINEAR_SPEED_METERS_PER_SECOND = 12.0
-MAX_LINEAR_ACCELERATION_METERS_PER_SECOND_SQUARED = 10.0
-MAX_LINEAR_JERK_METERS_PER_SECOND_CUBED = 1.0
-MAX_LATERAL_ACCELERATION_METERS_PER_SECOND_SQUARED = 10.0
-MAX_LATERAL_JERK_METERS_PER_SECOND_CUBED = 1.0
+MOST_ALLOWED_WAYPOINTS = 90
 
 
 class GeoCoordinate:
@@ -61,12 +51,20 @@ class CommandPoint(GeoCoordinate):
         self.alt = altitude
         self.hdg = heading
         self.function = "WAYPT"
+        self.arguments = {
+            "lateral_acceleration_meters_per_second": 12.0
+        }
 
     @property
     def command(self):
         if self.function == "WAYPT":
-            return f"{self.function}, {self.lat}, {self.lon}, {self.alt}, {self.hdg:.3f}, " \
-                   f"{LATERAL_ACCELERATION_METERS_PER_SECOND}"
+            lat_acc = self.arguments["lateral_acceleration_meters_per_second"]
+            return f"{self.function}, {self.lat}, {self.lon}, {self.alt}, {self.hdg:.3f}, {lat_acc}"
+
+        if self.function == "TURN":
+            heading_change = self.arguments["heading_changed"]
+            lat_acc = self.arguments["lateral_acceleration_meters_per_second"]
+            return f"{self.function}, {heading_change}, {lat_acc}"
 
 
 class Path:
@@ -121,15 +119,21 @@ class Path:
             command_point = CommandPoint(waypoint.lat, waypoint.lon, elevation, bearing)
             self.command_points.append(command_point)
 
-    def filter_command_points(self):
+    def filter_command_points(self, maximum_command_points=None):
         tolerance_degrees = 5.0
         tolerance_distance_meters = 10.0
 
+        if maximum_command_points is None or len(self.command_points) <= maximum_command_points:
+            return
+
+        # removes coordinates that have similar heading to prevent too many points in straight paths
         current_index = 0
-        while current_index < len(self.command_points) - 1:
+        while current_index < len(self.command_points) - 2:
             next_index = current_index + 1
-            current_bearing = self.command_points[current_index].hdg
-            next_bearing = self.command_points[next_index].hdg
+            current_command_point = self.command_points[current_index]
+            next_command_point = self.command_points[next_index]
+            current_bearing = current_command_point.hdg
+            next_bearing = next_command_point.hdg
             heading_difference = min(abs(current_bearing - next_bearing), 360 - abs(current_bearing - next_bearing))
             similar_heading = heading_difference < tolerance_degrees
             if similar_heading:
@@ -137,57 +141,65 @@ class Path:
             else:
                 current_index += 1
 
-        """
-        new_waypoints = []
-        current_bearing = float('nan')
-        for bearing, waypoint in zip(bearings, waypoints):
-            if not (current_bearing - 2 < bearing < current_bearing + 2):
-                new_waypoints.append(waypoint)
-                current_bearing = bearing
-        if new_waypoints[-1] != waypoints[-1]:
-            new_waypoints.append(waypoints[-1])
+        if maximum_command_points is None or len(self.command_points) <= maximum_command_points:
+            return
 
-        waypoints = new_waypoints
+        # removes coordinates that have distances to prevent too many points in on top of each other
+        current_index = 0
+        while current_index < len(self.command_points) - 2:
+            next_index = current_index + 1
+            current_command_point = self.command_points[current_index]
+            next_command_point = self.command_points[next_index]
+            distance_meters = GeoCoordinate.calculate_distance(current_command_point, next_command_point, unit="m")
+            close_coordinates = distance_meters < tolerance_distance_meters
+            if close_coordinates:
+                self.command_points.pop(next_index)
+            else:
+                current_index += 1
 
-        if MOST_ALLOWED_COORDINATES is None or len(waypoints) <= MOST_ALLOWED_COORDINATES:
-            return waypoints
-        else:
-            warnings.warn(
-                f"MOST_ALLOWED_COORDINATES exceeded - {len(waypoints) - MOST_ALLOWED_COORDINATES} points lost")
+        if maximum_command_points is None or len(self.command_points) <= maximum_command_points:
+            return
 
-        # filters the points to restrict the waypoints to the eliminate points that are the closest together
-        # as they are the least important
+        # filters the points to remove the closest points
         distances = [0.0]
-        for i in range(len(waypoints) - 1):
-            distance_km = GeoCoordinate.calculate_distance(waypoints[i], waypoints[i + 1], unit="km")
+        for i in range(len(self.command_points) - 1):
+            distance_km = GeoCoordinate.calculate_distance(self.command_points[i], self.command_points[i + 1])
             distances.append(distance_km)
 
-        sorted_distance_km, sorted_coordinates = zip(
-            *sorted(zip(distances, waypoints), key=lambda x: x[0], reverse=True))
-        most_important_coordinates = sorted_coordinates[:MOST_ALLOWED_COORDINATES - 2]
+        sorted_distances, sorted_coordinates = zip(
+            *sorted(zip(distances, self.command_points), key=lambda x: x[0], reverse=True))
+        most_important_command_points = sorted_coordinates[:maximum_command_points - 2]
 
-        new_waypoints_list = [waypoints[0]]
-        for coordinate in waypoints:
-            if coordinate in most_important_coordinates:
-                new_waypoints_list.append(coordinate)
-        new_waypoints_list.append(waypoints[-1])
-
-        return new_waypoints_list
-        """
+        current_index = 1
+        while current_index < len(self.command_points) - 2:
+            current_command_point = self.command_points[current_index]
+            if current_command_point in most_important_command_points:
+                current_index += 1
+            else:
+                self.command_points.pop(current_index)
 
     def output(self, *, filename=None):
+        loop_simulation_instead_of_ending = True
+
+        speed_meters_per_second = 12.0
+        max_linear_speed_meters_per_second = 12.0
+        max_linear_acceleration_meters_per_second_squared = 10.0
+        max_linear_jerk_meters_per_second_cubed = 1.0
+        max_lateral_acceleration_meters_per_second_squared = 10.0
+        max_lateral_jerk_meters_per_second_cubed = 1.0
+        
         motion_command = f"SIM:POS:MOTION:WRITE {{line_number}}, {{command}}"
 
         first_point = self.command_points[0]
 
         all_commands = []
         starting_commands = [
-            f"DYN, {MAX_LINEAR_SPEED_METERS_PER_SECOND}, {MAX_LINEAR_ACCELERATION_METERS_PER_SECOND_SQUARED}, "
-            f"{MAX_LINEAR_JERK_METERS_PER_SECOND_CUBED}, {MAX_LATERAL_ACCELERATION_METERS_PER_SECOND_SQUARED}, "
-            f"{MAX_LATERAL_JERK_METERS_PER_SECOND_CUBED}",
+            f"DYN, {max_linear_speed_meters_per_second}, {max_linear_acceleration_meters_per_second_squared}, "
+            f"{max_linear_jerk_meters_per_second_cubed}, {max_lateral_acceleration_meters_per_second_squared}, "
+            f"{max_lateral_jerk_meters_per_second_cubed}",
 
             f"REF, {first_point.lat}, {first_point.lon}, {first_point.alt}, {first_point.hdg:.3f}, "
-            f"{SPEED_METERS_PER_SECOND}"
+            f"{speed_meters_per_second}"
         ]
         all_commands.extend(starting_commands)
 
@@ -195,7 +207,7 @@ class Path:
             all_commands.append(command_point.command)
 
         ending_commands = [
-            f"GOTO, {len(starting_commands) + 1}" if LOOP_SIMULATION_INSTEAD_OF_ENDING else "END"
+            f"GOTO, {len(starting_commands) + 1}" if loop_simulation_instead_of_ending else "END"
         ]
         all_commands.extend(ending_commands)
 
@@ -283,13 +295,19 @@ def get_elevation_list_from_coordinates_list(coordinates: list[GeoCoordinate]) -
     return elevation_list
 
 
-def make_gps_simulation_commands():
+def main():
     starting_point, stops, ending_point, output_filename = get_configuration(CONFIGURATION_FILEPATH)
+
     path = Path(starting_point, stops, ending_point)
     path.generate_command_points()
-    path.filter_command_points()
+
+    if MOST_ALLOWED_WAYPOINTS is not None and len(path.command_points) > MOST_ALLOWED_WAYPOINTS:
+        warnings.warn(f"MOST_ALLOWED_WAYPOINTS EXCEEDED - {len(path.command_points) - MOST_ALLOWED_WAYPOINTS} commands "
+                      f"removed.\n This may cause the radio to display the vehicle off of the path at certain times.")
+        path.filter_command_points(MOST_ALLOWED_WAYPOINTS)
+
     path.output(filename=output_filename)
 
 
 if __name__ == '__main__':
-    make_gps_simulation_commands()
+    main()

@@ -1,17 +1,21 @@
-{
-   "Starting Point": {
-     "latitude": 36.016946,
-     "longitude": -78.908317
-   },
-   "Stops": [
-     {
-       "latitude": 35.996979,
-       "longitude": -78.910295
-     }
-   ],
-   "Ending Point": {
-     "latitude": 36.016946,
-     "longitude": -78.908317
-   },
-   "Output Filename": "commands.txt"
-}
+   {
+     "Starting Point": {
+       "latitude": 37.7749,
+       "longitude": -122.4194
+     },
+     "Stops": [
+       {
+         "latitude": 37.7815,
+         "longitude": -122.3937
+       },
+       {
+         "latitude": 37.7698,
+         "longitude": -122.4862
+       }
+     ],
+     "Ending Point": {
+       "latitude": 37.7749,
+       "longitude": -122.4194
+     },
+     "Output Filename": "commands.txt"
+   }
