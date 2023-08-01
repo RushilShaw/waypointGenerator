@@ -1,14 +1,26 @@
 import GpsUtils
 import pathlib
 
-COMMANDS_FILE = pathlib.Path("commands.txt")
+
 
 
 def main():
+    initialization_commands = [
+        "SIM:COM STOP",
+        "SIM:POS:MOTION:ZEROIZE"
+    ]
+    command_file = pathlib.Path("commands.txt")
+    final_commands = [
+        "SIM:POS:MODE MOTION"
+        "SIM:POS:MOTION:READ 1",
+        "SIM:OCM START"
+    ]
+
     gps = GpsUtils.ClawGPSSimulator()
-    gps.stream_file(COMMANDS_FILE)
-    start_simulation_command = "SIM:COM START"
-    gps.send_command(start_simulation_command)
+
+    gps.stream_list_of_commands(initialization_commands)
+    gps.stream_file(command_file)
+    gps.stream_list_of_commands(final_commands)
 
 
 if __name__ == '__main__':
