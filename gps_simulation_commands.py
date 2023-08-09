@@ -2,14 +2,30 @@ import math
 import json
 import requests
 import pathlib
-import warnings
 import geopy.distance
 from urllib import parse
-from constants import MAPBOX_API_KEY
 
 
+MAPBOX_API_KEY = r"sk.eyJ1IjoicnVzaGlsc2hhaCIsImEiOiJjbGo3YTc3cGgwanljM2VzYzF5cTQ0dTduIn0.6HX8RTGZHVbmqrCnUxAXWA"
 CONFIGURATION_FILEPATH = pathlib.Path("config.json")
 MOST_ALLOWED_WAYPOINTS = 90
+
+
+class CommandPoint:
+    def __init__(self, latitude: float, longitude: float, altitude: float, heading: float):
+        self.lat = latitude
+        self.lon = longitude
+        self.alt = altitude
+        self.hdg = heading
+        self.function = "WAYPT"
+        self.arguments = {
+            "lateral_acceleration_meters_per_second": 12.0
+        }
+
+    @property
+    def command(self):
+        lat_acc = self.arguments["lateral_acceleration_meters_per_second"]
+        return f"{self.function}, {self.lat}, {self.lon}, {self.alt}, {self.hdg:.3f}, {lat_acc}"
 
 
 class GeoCoordinate:
@@ -17,10 +33,12 @@ class GeoCoordinate:
         self.lat = latitude
         self.lon = longitude
 
+    @staticmethod
     def calculate_distance(self, other, unit="km") -> float:
         distance = geopy.distance.geodesic((self.lat, self.lon), (other.lat, other.lon))
         return getattr(distance, unit)
 
+    @staticmethod
     def calculate_bearing(self, other) -> float:
         lat1 = self.lat
         lon1 = self.lon
@@ -43,28 +61,6 @@ class GeoCoordinate:
         bearing_normalized = (bearing_deg + 360) % 360
 
         return bearing_normalized
-
-
-class CommandPoint(GeoCoordinate):
-    def __init__(self, latitude: float, longitude: float, altitude: float, heading: float):
-        super().__init__(latitude, longitude)
-        self.alt = altitude
-        self.hdg = heading
-        self.function = "WAYPT"
-        self.arguments = {
-            "lateral_acceleration_meters_per_second": 12.0
-        }
-
-    @property
-    def command(self):
-        if self.function == "WAYPT":
-            lat_acc = self.arguments["lateral_acceleration_meters_per_second"]
-            return f"{self.function}, {self.lat}, {self.lon}, {self.alt}, {self.hdg:.3f}, {lat_acc}"
-
-        if self.function == "TURN":
-            heading_change = self.arguments["heading_changed"]
-            lat_acc = self.arguments["lateral_acceleration_meters_per_second"]
-            return f"{self.function}, {heading_change}, {lat_acc}"
 
 
 class Path:
@@ -300,12 +296,7 @@ def main():
 
     path = Path(starting_point, stops, ending_point)
     path.generate_command_points()
-
-    if MOST_ALLOWED_WAYPOINTS is not None and len(path.command_points) > MOST_ALLOWED_WAYPOINTS:
-        warnings.warn(f"MOST_ALLOWED_WAYPOINTS EXCEEDED - {len(path.command_points) - MOST_ALLOWED_WAYPOINTS} commands "
-                      f"removed.\n This may cause the radio to display the vehicle off of the path at certain times.")
-        path.filter_command_points(MOST_ALLOWED_WAYPOINTS)
-
+    path.filter_command_points(MOST_ALLOWED_WAYPOINTS)
     path.output(filename=output_filename)
 
 
