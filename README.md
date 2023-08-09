@@ -82,10 +82,6 @@ You can customize the script according to your specific requirements:
 - Adjust the `LATERAL_ACCELERATION` constant to change the lateral acceleration value for the generated commands.
 - Customize the `CONFIGURATION_FILEPATH` constant to modify the generated output format or add additional output options.
 
-## License
-
-This script is released under the [MIT License](LICENSE).
-
 ## Disclaimer
 
 This script relies on external APIs and services (Mapbox API and Open-Meteo API) to obtain route information, coordinates, and elevations. Please make sure you comply with the terms and conditions of these services while using this script.
